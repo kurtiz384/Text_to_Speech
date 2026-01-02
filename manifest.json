@@ -1,0 +1,27 @@
+{
+  "name": "Azure Text-to-Speech",
+  "short_name": "TTS",
+  "description": "Azure Text-to-Speech aplikace pro iPad s minimální latencí",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e27",
+  "theme_color": "#4a9eff",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "cs-CZ",
+  "dir": "ltr"
+}

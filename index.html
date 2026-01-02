@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TTS">
+    <title>Azure Text-to-Speech</title>
+    
+    <!-- Azure Speech SDK -->
+    <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+    
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>Azure TTS</h1>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot"></span>
+                <span class="status-text">Připraveno</span>
+            </div>
+        </header>
+
+        <!-- Controls -->
+        <div class="controls-panel">
+            <div class="control-group">
+                <label for="voiceSelect">Hlas:</label>
+                <select id="voiceSelect" class="voice-select">
+                    <!-- Voices will be populated from config -->
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="rateSelect">Rychlost:</label>
+                <select id="rateSelect" class="rate-select">
+                    <option value="-10%">-10%</option>
+                    <option value="-20%">-20%</option>
+                    <option value="-30%">-30%</option>
+                    <option value="-40%">-40%</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Text Windows Container -->
+        <div class="text-windows-container">
+            <!-- Window 1 -->
+            <div class="text-window" data-window="1">
+                <div class="window-header">
+                    <span class="window-title">Okno 1</span>
+                    <span class="char-count" id="charCount1">0 znaků</span>
+                </div>
+                <div class="text-area-wrapper">
+                    <textarea 
+                        id="textArea1" 
+                        class="text-area" 
+                        placeholder="Text pro psaní..."
+                        spellcheck="true"
+                    ></textarea>
+                </div>
+                <div class="window-controls">
+                    <button class="btn btn-primary" onclick="app.speakAll(1)">
+                        <span class="btn-icon">🔊</span>
+                        Přečíst vše
+                    </button>
+                    <button class="btn btn-secondary" onclick="app.speakSelection(1)">
+                        <span class="btn-icon">🔊</span>
+                        Přečíst výběr
+                    </button>
+                </div>
+            </div>
+
+            <!-- Window 2 -->
+            <div class="text-window" data-window="2">
+                <div class="window-header">
+                    <span class="window-title">Okno 2</span>
+                    <span class="char-count" id="charCount2">0 znaků</span>
+                </div>
+                <div class="text-area-wrapper">
+                    <textarea 
+                        id="textArea2" 
+                        class="text-area" 
+                        placeholder="Text pro psaní..."
+                        spellcheck="true"
+                    ></textarea>
+                </div>
+                <div class="window-controls">
+                    <button class="btn btn-primary" onclick="app.speakAll(2)">
+                        <span class="btn-icon">🔊</span>
+                        Přečíst vše
+                    </button>
+                    <button class="btn btn-secondary" onclick="app.speakSelection(2)">
+                        <span class="btn-icon">🔊</span>
+                        Přečíst výběr
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="bottom-controls">
+            <button class="btn btn-accent" onclick="app.repeatLast()">
+                <span class="btn-icon">🔁</span>
+                Zopakovat poslední
+            </button>
+            
+            <div class="keyboard-hints">
+                <span class="hint">⌃⌘V = Přečíst vše</span>
+                <span class="hint">⌃⌘B = Přečíst výběr</span>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="toast-container"></div>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Načítám Azure TTS...</div>
+        </div>
+
+        <!-- Config Modal -->
+        <div id="configModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <h2>Konfigurace Azure</h2>
+                <p>Zadejte Azure Speech Service credentials:</p>
+                
+                <div class="form-group">
+                    <label for="azureKey">Azure Key:</label>
+                    <input type="text" id="azureKey" placeholder="Váš Azure subscription key">
+                </div>
+                
+                <div class="form-group">
+                    <label for="azureRegion">Azure Region:</label>
+                    <input type="text" id="azureRegion" placeholder="např. westeurope" value="westeurope">
+                </div>
+                
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="app.saveConfig()">Uložit</button>
+                    <button class="btn btn-secondary" onclick="app.closeConfigModal()">Zrušit</button>
+                </div>
+                
+                <div class="config-help">
+                    <p><strong>Kde získat Azure credentials:</strong></p>
+                    <ol>
+                        <li>Přihlaste se do <a href="https://portal.azure.com" target="_blank">Azure Portal</a></li>
+                        <li>Vytvořte "Speech Service" resource</li>
+                        <li>V sekci "Keys and Endpoint" zkopírujte KEY 1 a REGION</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
