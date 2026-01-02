@@ -127,21 +127,11 @@ class TextToSpeechApp {
     populateVoices() {
         const voiceSelect = document.getElementById('voiceSelect');
         
-        // Default voices - fallback if config.json doesn't load
+        // Only 3 voices as requested by user
         const defaultVoices = [
-            { id: 'de-DE-KillianNeural', name: 'Němčina - Killian (Mužský)', lang: 'de-DE' },
-            { id: 'de-DE-ConradNeural', name: 'Němčina - Conrad (Mužský)', lang: 'de-DE' },
-            { id: 'de-DE-KatjaNeural', name: 'Němčina - Katja (Ženský)', lang: 'de-DE' },
-            { id: 'cs-CZ-AntoninNeural', name: 'Čeština - Antonín (Mužský)', lang: 'cs-CZ' },
-            { id: 'cs-CZ-VlastaNeural', name: 'Čeština - Vlasta (Ženský)', lang: 'cs-CZ' },
-            { id: 'en-US-GuyNeural', name: 'Angličtina US - Guy (Mužský)', lang: 'en-US' },
-            { id: 'en-US-JennyNeural', name: 'Angličtina US - Jenny (Ženský)', lang: 'en-US' },
-            { id: 'en-GB-RyanNeural', name: 'Angličtina UK - Ryan (Mužský)', lang: 'en-GB' },
-            { id: 'en-GB-SoniaNeural', name: 'Angličtina UK - Sonia (Ženský)', lang: 'en-GB' },
-            { id: 'sk-SK-LukasNeural', name: 'Slovenština - Lukas (Mužský)', lang: 'sk-SK' },
-            { id: 'sk-SK-ViktoriaNeural', name: 'Slovenština - Viktoria (Ženský)', lang: 'sk-SK' },
-            { id: 'pl-PL-MarekNeural', name: 'Polština - Marek (Mužský)', lang: 'pl-PL' },
-            { id: 'pl-PL-ZofiaNeural', name: 'Polština - Zofia (Ženský)', lang: 'pl-PL' },
+            { id: 'de-DE-ChristophNeural', name: 'Němčina - Christoph', lang: 'de-DE' },
+            { id: 'cs-CZ-AntoninNeural', name: 'Čeština - Antonín', lang: 'cs-CZ' },
+            { id: 'en-US-GuyNeural', name: 'Angličtina - Guy', lang: 'en-US' },
         ];
         
         // Use voices from config if available, otherwise use defaults
@@ -224,6 +214,57 @@ class TextToSpeechApp {
         if (savedRate) {
             document.getElementById('rateSelect').value = savedRate;
         }
+        
+        // Touch-friendly button event listeners
+        // Use both click and touchend for maximum compatibility
+        this.setupButtonListeners();
+    }
+    
+    setupButtonListeners() {
+        // Get all buttons with data-action attribute
+        const buttons = document.querySelectorAll('[data-action]');
+        
+        buttons.forEach(button => {
+            const action = button.getAttribute('data-action');
+            const windowNum = button.getAttribute('data-window');
+            
+            // Add both click and touchend listeners for iPad trackpad/touch compatibility
+            const handleAction = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('[TTS] Button action:', action, 'window:', windowNum);
+                
+                switch(action) {
+                    case 'speak-all':
+                        this.speakAll(parseInt(windowNum));
+                        break;
+                    case 'speak-selection':
+                        this.speakSelection(parseInt(windowNum));
+                        break;
+                    case 'repeat-last':
+                        this.repeatLast();
+                        break;
+                    case 'save-config':
+                        this.saveConfig();
+                        break;
+                    case 'close-modal':
+                        this.closeConfigModal();
+                        break;
+                }
+            };
+            
+            // Add multiple event types for maximum compatibility
+            button.addEventListener('click', handleAction, { passive: false });
+            button.addEventListener('touchend', handleAction, { passive: false });
+            
+            // Prevent default touch behavior
+            button.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+            }, { passive: false });
+        });
+        
+        console.log('[TTS] Button listeners setup complete');
     }
 
     setupKeyboardShortcuts() {
