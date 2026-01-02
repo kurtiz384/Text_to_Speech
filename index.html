@@ -17,14 +17,7 @@
 </head>
 <body>
     <div class="app-container">
-        <!-- Header -->
-        <header class="app-header">
-            <h1>Azure TTS</h1>
-            <div class="status-indicator" id="statusIndicator">
-                <span class="status-dot"></span>
-                <span class="status-text">Připraveno</span>
-            </div>
-        </header>
+        <!-- Header removed per user request -->
 
         <!-- Controls -->
         <div class="controls-panel">
@@ -38,10 +31,11 @@
             <div class="control-group">
                 <label for="rateSelect">Rychlost:</label>
                 <select id="rateSelect" class="rate-select">
+                    <option value="-5%">-5%</option>
                     <option value="-10%">-10%</option>
+                    <option value="-15%">-15%</option>
                     <option value="-20%">-20%</option>
-                    <option value="-30%">-30%</option>
-                    <option value="-40%">-40%</option>
+                    <option value="-25%">-25%</option>
                 </select>
             </div>
         </div>
@@ -63,11 +57,11 @@
                     ></textarea>
                 </div>
                 <div class="window-controls">
-                    <button class="btn btn-primary" onclick="app.speakAll(1)">
+                    <button class="btn btn-primary" data-action="speak-all" data-window="1">
                         <span class="btn-icon">🔊</span>
                         Přečíst vše
                     </button>
-                    <button class="btn btn-secondary" onclick="app.speakSelection(1)">
+                    <button class="btn btn-secondary" data-action="speak-selection" data-window="1">
                         <span class="btn-icon">🔊</span>
                         Přečíst výběr
                     </button>
@@ -89,11 +83,11 @@
                     ></textarea>
                 </div>
                 <div class="window-controls">
-                    <button class="btn btn-primary" onclick="app.speakAll(2)">
+                    <button class="btn btn-primary" data-action="speak-all" data-window="2">
                         <span class="btn-icon">🔊</span>
                         Přečíst vše
                     </button>
-                    <button class="btn btn-secondary" onclick="app.speakSelection(2)">
+                    <button class="btn btn-secondary" data-action="speak-selection" data-window="2">
                         <span class="btn-icon">🔊</span>
                         Přečíst výběr
                     </button>
@@ -103,7 +97,7 @@
 
         <!-- Bottom Controls -->
         <div class="bottom-controls">
-            <button class="btn btn-accent" onclick="app.repeatLast()">
+            <button class="btn btn-accent" data-action="repeat-last">
                 <span class="btn-icon">🔁</span>
                 Zopakovat poslední
             </button>
@@ -140,8 +134,8 @@
                 </div>
                 
                 <div class="modal-actions">
-                    <button class="btn btn-primary" onclick="app.saveConfig()">Uložit</button>
-                    <button class="btn btn-secondary" onclick="app.closeConfigModal()">Zrušit</button>
+                    <button class="btn btn-primary" data-action="save-config">Uložit</button>
+                    <button class="btn btn-secondary" data-action="close-modal">Zrušit</button>
                 </div>
                 
                 <div class="config-help">
