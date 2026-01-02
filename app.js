@@ -548,6 +548,12 @@ class TextToSpeechApp {
         const statusText = document.querySelector('.status-text');
         const statusDot = document.querySelector('.status-dot');
         
+        // Check if status elements exist (they were removed in v1.1)
+        if (!statusText || !statusDot) {
+            console.log('[TTS] Status update (no UI):', text, type);
+            return;
+        }
+        
         statusText.textContent = text;
         
         // Update dot color
