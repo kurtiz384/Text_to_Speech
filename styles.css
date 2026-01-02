@@ -287,6 +287,10 @@ select:focus {
     white-space: nowrap;
     min-height: 44px; /* Touch-friendly */
     flex: 1;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .btn-icon {
