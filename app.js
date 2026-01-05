@@ -9,6 +9,7 @@ class TextToSpeechApp {
         this.synthesizer = null;
         this.lastText = '';
         this.activeWindow = 1;
+        this.isSynthesizing = false;  // Flag to prevent concurrent synthesis
         
         this.init();
     }
@@ -398,6 +399,14 @@ class TextToSpeechApp {
         console.log('[TTS] synthesizeSpeech called');
         console.log('[TTS] Synthesizer exists:', !!this.synthesizer);
         console.log('[TTS] Text length:', text.length);
+        console.log('[TTS] Is synthesizing:', this.isSynthesizing);
+        
+        // Check if already synthesizing
+        if (this.isSynthesizing) {
+            console.warn('[TTS] Synthesis already in progress, ignoring request');
+            this.showToast('Čekejte na dokončení předchozího přehrávání', 'warning');
+            return;
+        }
         
         if (!this.synthesizer) {
             console.error('[TTS] Synthesizer not initialized!');
@@ -411,6 +420,7 @@ class TextToSpeechApp {
         console.log('[TTS] First 100 chars:', text.substring(0, 100));
         
         this.lastText = text;
+        this.isSynthesizing = true;  // Set flag
         
         // Get selected voice and rate
         const voiceId = document.getElementById('voiceSelect').value;
@@ -423,6 +433,7 @@ class TextToSpeechApp {
         const safeText = this.escapeXml(text);
         
         // Build SSML with leading silence to prevent first syllable cutoff
+        // Using 200ms as user reported 100ms wasn't enough
         const ssml = `
 <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'>
     <voice name='${voiceId}'>
@@ -452,9 +463,11 @@ class TextToSpeechApp {
                         if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) {
                             this.updateStatus('Přehrávám...', 'success');
                             this.showToast(`Přehrávání (${latency}ms)`, 'success');
+                            this.isSynthesizing = false;  // Reset flag on success
                             resolve();
                         } else if (result.reason === SpeechSDK.ResultReason.Canceled) {
                             console.error('[TTS] Synthesis CANCELED');
+                            this.isSynthesizing = false;  // Reset flag on cancel
                             
                             // Get detailed cancellation info
                             const cancellation = SpeechSDK.CancellationDetails.fromResult(result);
@@ -483,6 +496,7 @@ class TextToSpeechApp {
                             reject(new Error(errorMessage));
                         } else {
                             console.error('[TTS] Unexpected result reason:', result.reason);
+                            this.isSynthesizing = false;  // Reset flag on unexpected result
                             this.updateStatus('Chyba', 'error');
                             this.showToast('Neočekávaná chyba syntézy', 'error');
                             reject(new Error('Synthesis failed with reason: ' + result.reason));
@@ -490,6 +504,7 @@ class TextToSpeechApp {
                     },
                     (error) => {
                         console.error('[TTS] Synthesis error:', error);
+                        this.isSynthesizing = false;  // Reset flag on error
                         
                         if (error.privErrorDetails) {
                             console.error('[TTS] Error details:', error.privErrorDetails);
@@ -509,6 +524,7 @@ class TextToSpeechApp {
             
         } catch (error) {
             console.error('[TTS] Failed to synthesize:', error);
+            this.isSynthesizing = false;  // Reset flag in catch block
             this.updateStatus('Chyba', 'error');
             
             // Check if it's an authentication error
