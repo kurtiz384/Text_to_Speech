@@ -429,21 +429,29 @@ class TextToSpeechApp {
         // Derive locale from voice ID
         const locale = this.getLocaleFromVoice(voiceId);
         
+        console.log('[TTS] Voice ID:', voiceId);
+        console.log('[TTS] Derived locale:', locale);
+        console.log('[TTS] Rate:', rate);
+        
         // Escape XML special characters
         const safeText = this.escapeXml(text);
         
         // Build SSML with leading silence to prevent first syllable cutoff
-        // Using 200ms as user reported 100ms wasn't enough
+        // Using 400ms for reliable first syllable across all languages (de, cs, en)
         const ssml = `
 <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'>
     <voice name='${voiceId}'>
-        <break time='300ms'/>
+        <break time='400ms'/>
         <prosody rate='${rate}'>${safeText}</prosody>
     </voice>
 </speak>
         `.trim();
         
-        console.log('[TTS] SSML prepared, voice:', voiceId, 'rate:', rate);
+        console.log('[TTS] SSML prepared');
+        console.log('[TTS] Voice:', voiceId);
+        console.log('[TTS] Locale:', locale);
+        console.log('[TTS] Rate:', rate);
+        console.log('[TTS] Text preview:', text.substring(0, 50));
         
         this.updateStatus('Načítám...', 'loading');
         
