@@ -437,7 +437,7 @@ class TextToSpeechApp {
         const ssml = `
 <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'>
     <voice name='${voiceId}'>
-        <break time='100ms'/>
+        <break time='300ms'/>
         <prosody rate='${rate}'>${safeText}</prosody>
     </voice>
 </speak>
