@@ -437,11 +437,11 @@ class TextToSpeechApp {
         const safeText = this.escapeXml(text);
         
         // Build SSML with leading silence to prevent first syllable cutoff
-        // Using 400ms for reliable first syllable across all languages (de, cs, en)
+        // Using 200ms for reliable first syllable across all languages (de, cs, en)
         const ssml = `
 <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'>
     <voice name='${voiceId}'>
-        <break time='400ms'/>
+        <break time='200ms'/>
         <prosody rate='${rate}'>${safeText}</prosody>
     </voice>
 </speak>
