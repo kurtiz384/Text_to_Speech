@@ -533,6 +533,50 @@ class TextToSpeechApp {
         await this.synthesizeSpeech(this.lastText);
     }
     
+    // WATCHDOG: detekce tichého selhání.
+    // Azure SDK někdy hlásí úspěch, ale audio nikdy nezačne hrát
+    // (typicky po idle timeoutu WebSocket spojení). Tato funkce zkontroluje
+    // 2 sekundy po "úspěchu", jestli některý <audio> element skutečně hraje.
+    // Pokud ne, varuje uživatele a doporučí znovu kliknout na Přečíst vše.
+    startAudioWatchdog(synthLatency) {
+        // Pokud už běží předchozí watchdog, zrušíme ho
+        if (this._audioWatchdogTimer) {
+            clearTimeout(this._audioWatchdogTimer);
+        }
+        
+        this._audioWatchdogTimer = setTimeout(() => {
+            // Najdeme všechny audio elementy v DOM
+            const audios = document.querySelectorAll('audio');
+            let anythingPlaying = false;
+            
+            audios.forEach((el) => {
+                // Element hraje, pokud: není pozastavený, neskončil, a má aktuální pozici > 0
+                // (nebo má src a readyState >= 2 = HAVE_CURRENT_DATA)
+                if (!el.paused && !el.ended && (el.currentTime > 0 || el.readyState >= 2)) {
+                    anythingPlaying = true;
+                }
+            });
+            
+            console.log('[TTS][WATCHDOG] audio elementů:', audios.length, 
+                        'něco hraje:', anythingPlaying);
+            
+            if (!anythingPlaying) {
+                console.warn('[TTS][WATCHDOG] Tiché selhání! Azure hlásil úspěch, ale zvuk nehraje.');
+                this.updateStatus('Tiché selhání', 'error');
+                this.showToast(
+                    'Zvuk se nepřehrál (spojení mohlo vypršet). Klikněte znovu na Přečíst vše.',
+                    'warning'
+                );
+                
+                // Předem zavřeme synthesizer, ať další klik vytvoří úplně čerstvý
+                if (this.synthesizer) {
+                    try { this.synthesizer.close(); } catch (_) {}
+                    this.synthesizer = null;
+                }
+            }
+        }, 2000); // 2 sekundy je dost času, aby audio začalo hrát
+    }
+    
     // Zastaví probíhající přehrávání.
     //
     // PROBLÉM: Azure SDK stáhne celé audio a předá ho prohlížeči k přehrání.
@@ -549,6 +593,12 @@ class TextToSpeechApp {
         console.log('[TTS] stopSpeaking called');
         
         let stoppedSomething = false;
+        
+        // Zrušit audio watchdog - aby nehlásil "tiché selhání", když jsme stopli sami
+        if (this._audioWatchdogTimer) {
+            clearTimeout(this._audioWatchdogTimer);
+            this._audioWatchdogTimer = null;
+        }
         
         // === 1) Zastavit všechny HTML audio/video elementy ===
         // Azure SDK někdy vytváří <audio> element a přidává ho do DOM.
@@ -664,7 +714,6 @@ class TextToSpeechApp {
 
     async synthesizeSpeech(text) {
         console.log('[TTS] synthesizeSpeech called');
-        console.log('[TTS] Synthesizer exists:', !!this.synthesizer);
         console.log('[TTS] Text length:', text.length);
         console.log('[TTS] Is synthesizing:', this.isSynthesizing);
         
@@ -675,15 +724,37 @@ class TextToSpeechApp {
             return;
         }
         
-        if (!this.synthesizer) {
-            console.error('[TTS] Synthesizer not initialized!');
+        if (!this.speechConfig) {
+            console.error('[TTS] SpeechConfig not initialized!');
             this.showToast('Azure TTS není inicializován. Zkontrolujte credentials.', 'error');
             this.showConfigModal();
             return;
         }
         
-        console.log('[TTS] Starting synthesis...');
-        console.log('[TTS] Text length:', text.length);
+        // KLÍČOVÁ ZMĚNA: vždy zavřeme starý synthesizer a vytvoříme nový.
+        // Důvod: dlouho žijící synthesizer drží WebSocket k Azure, který
+        // po nějaké době nečinnosti spadne nebo iOS Safari uspí. SDK to
+        // nezachytí - hlásí úspěch, ale audio se nikdy nestáhne (= "Přehrávám..." + ticho).
+        // Čerstvý synthesizer pro každé volání = vždy nové spojení.
+        if (this.synthesizer) {
+            try {
+                this.synthesizer.close();
+                console.log('[TTS] Starý synthesizer zavřen před novou syntézou');
+            } catch (e) {
+                console.warn('[TTS] Chyba při zavírání starého synthesizeru:', e);
+            }
+            this.synthesizer = null;
+        }
+        
+        try {
+            this.createSynthesizer();
+        } catch (e) {
+            console.error('[TTS] Nelze vytvořit nový synthesizer:', e);
+            this.showToast('Chyba při vytváření syntetizéru', 'error');
+            return;
+        }
+        
+        console.log('[TTS] Starting synthesis with fresh synthesizer...');
         console.log('[TTS] First 100 chars:', text.substring(0, 100));
         
         this.lastText = text;
@@ -739,6 +810,13 @@ class TextToSpeechApp {
                             this.updateStatus('Přehrávám...', 'success');
                             this.showToast(`Přehrávání (${latency}ms)`, 'success');
                             this.isSynthesizing = false;  // Reset flag on success
+                            
+                            // WATCHDOG: Azure SDK hlásí úspěch i v případě, že
+                            // audio data nikdy nedorazí do prohlížeče (např. WebSocket
+                            // mezitím spadl). Zkontrolujeme za 2 sekundy, jestli
+                            // skutečně něco hraje. Pokud ne, varujeme uživatele.
+                            this.startAudioWatchdog(latency);
+                            
                             resolve();
                         } else if (result.reason === SpeechSDK.ResultReason.Canceled) {
                             console.error('[TTS] Synthesis CANCELED');
