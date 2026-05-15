@@ -1,6 +1,11 @@
 // ===================================================================
 // Azure Text-to-Speech PWA Application
 // Optimized for iPad with minimal latency
+//
+// ZMĚNY v této verzi:
+// - Přidána tlačítka STOP ke každému oknu
+// - Klávesová zkratka Ctrl+Cmd+S pro zastavení mluvení
+// - Font textových polí zvětšen o 15% (inline přes JS)
 // ===================================================================
 
 class TextToSpeechApp {
@@ -10,6 +15,7 @@ class TextToSpeechApp {
         this.lastText = '';
         this.activeWindow = 1;
         this.isSynthesizing = false;  // Flag to prevent concurrent synthesis
+        this.speechConfig = null;     // Uloženo zvlášť, aby šlo synthesizer znovu vytvořit po STOP
         
         this.init();
     }
@@ -26,6 +32,8 @@ class TextToSpeechApp {
         
         // Setup UI
         this.setupUI();
+        this.injectStopButtons();      // NOVÉ: přidá STOP tlačítka do DOM
+        this.enlargeTextareaFonts();   // NOVÉ: zvětší font textových polí o 15 %
         this.setupEventListeners();
         this.setupKeyboardShortcuts();
         this.restoreTexts();
@@ -95,21 +103,17 @@ class TextToSpeechApp {
                 return;
             }
             
-            const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
+            // Uložíme speechConfig zvlášť, abychom mohli později recreate synthesizer po STOP
+            this.speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
                 this.config.azureKey,
                 this.config.azureRegion
             );
             
             // Set output format for better quality
-            speechConfig.speechSynthesisOutputFormat = 
+            this.speechConfig.speechSynthesisOutputFormat = 
                 SpeechSDK.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
             
-            const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
-            
-            this.synthesizer = new SpeechSDK.SpeechSynthesizer(
-                speechConfig,
-                audioConfig
-            );
+            this.createSynthesizer();
             
             this.updateStatus('Připraveno', 'success');
             console.log('[TTS] Azure SDK initialized successfully');
@@ -123,6 +127,17 @@ class TextToSpeechApp {
             this.updateStatus('Chyba', 'error');
             this.showConfigModal();
         }
+    }
+
+    // NOVÉ: vytvoří (nebo znovuvytvoří) synthesizer.
+    // Voláno z initializeAzure() a po stopSpeaking().
+    createSynthesizer() {
+        const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
+        this.synthesizer = new SpeechSDK.SpeechSynthesizer(
+            this.speechConfig,
+            audioConfig
+        );
+        console.log('[TTS] Synthesizer created');
     }
 
     populateVoices() {
@@ -177,6 +192,64 @@ class TextToSpeechApp {
         // Update character counts
         this.updateCharCount(1);
         this.updateCharCount(2);
+    }
+
+    // NOVÉ: dynamicky přidá tlačítko STOP vedle existujících tlačítek
+    // u každého okna. Nemusíte tedy upravovat HTML soubor.
+    injectStopButtons() {
+        for (let i = 1; i <= 2; i++) {
+            // Najdeme libovolné existující tlačítko v daném okně (Přečíst vše / Přečíst výběr)
+            // a STOP tlačítko vložíme za něj do stejného rodiče.
+            const refButton = document.querySelector(
+                `[data-action="speak-selection"][data-window="${i}"]`
+            ) || document.querySelector(
+                `[data-action="speak-all"][data-window="${i}"]`
+            );
+            
+            if (!refButton) {
+                console.warn(`[TTS] Nelze najít referenční tlačítko pro okno ${i}, STOP tlačítko nebylo přidáno.`);
+                continue;
+            }
+            
+            // Pokud už STOP tlačítko existuje (např. po hot-reloadu), nevkládáme znovu
+            const exists = refButton.parentElement.querySelector(
+                `[data-action="stop"][data-window="${i}"]`
+            );
+            if (exists) continue;
+            
+            const stopButton = document.createElement('button');
+            // Použijeme stejné CSS třídy jako sousední tlačítka pro konzistentní vzhled
+            stopButton.className = refButton.className;
+            stopButton.setAttribute('data-action', 'stop');
+            stopButton.setAttribute('data-window', String(i));
+            stopButton.setAttribute('type', 'button');
+            stopButton.setAttribute('aria-label', `Zastavit přehrávání (okno ${i})`);
+            stopButton.textContent = '⏹ STOP';
+            
+            // Vložíme hned za referenční tlačítko
+            refButton.insertAdjacentElement('afterend', stopButton);
+            
+            console.log(`[TTS] STOP tlačítko přidáno do okna ${i}`);
+        }
+    }
+
+    // NOVÉ: zvětší font textových polí o 15 %. 
+    // Děláme to po načtení DOM - vezmeme aktuální CSS font-size a vynásobíme 1.15.
+    enlargeTextareaFonts() {
+        for (let i = 1; i <= 2; i++) {
+            const textArea = document.getElementById(`textArea${i}`);
+            if (!textArea) continue;
+            
+            // Aktuální výsledná velikost (v px) z CSS:
+            const computed = window.getComputedStyle(textArea).fontSize;
+            const currentPx = parseFloat(computed);
+            
+            if (Number.isFinite(currentPx) && currentPx > 0) {
+                const newPx = (currentPx * 1.15).toFixed(2);
+                textArea.style.fontSize = `${newPx}px`;
+                console.log(`[TTS] textArea${i} font: ${currentPx}px → ${newPx}px (+15%)`);
+            }
+        }
     }
 
     setupEventListeners() {
@@ -243,6 +316,10 @@ class TextToSpeechApp {
                     case 'speak-selection':
                         this.speakSelection(parseInt(windowNum));
                         break;
+                    case 'stop':
+                        // NOVÉ: STOP tlačítko
+                        this.stopSpeaking();
+                        break;
                     case 'repeat-last':
                         this.repeatLast();
                         break;
@@ -271,6 +348,10 @@ class TextToSpeechApp {
     setupKeyboardShortcuts() {
         // Control+Command+V = Speak All
         // Control+Command+B = Speak Selection
+        // Control+Command+S = STOP  (NOVÉ)
+        //
+        // Poznámka: Safari na iPadu může některé Cmd+Ctrl zkratky zachytávat.
+        // Pokud Ctrl+Cmd+S nebude fungovat, lze přidat záložní kombinaci.
         
         document.addEventListener('keydown', (e) => {
             // Check for Control+Command (or Ctrl+Meta on some systems)
@@ -286,6 +367,11 @@ class TextToSpeechApp {
                 e.preventDefault();
                 this.speakSelection(this.activeWindow);
                 console.log('[TTS] Keyboard shortcut: Speak Selection (Ctrl+Cmd+B)');
+            } else if (e.key === 's' || e.key === 'S') {
+                // NOVÉ: STOP
+                e.preventDefault();
+                this.stopSpeaking();
+                console.log('[TTS] Keyboard shortcut: STOP (Ctrl+Cmd+S)');
             }
         });
     }
@@ -386,6 +472,41 @@ class TextToSpeechApp {
         this.ensureAudioUnlocked();
         
         await this.synthesizeSpeech(this.lastText);
+    }
+    
+    // NOVÉ: zastaví probíhající syntézu.
+    // Azure JS SDK nemá samostatnou "stop" metodu - musíme synthesizer
+    // zavřít (close) a vytvořit nový pro další požadavky.
+    stopSpeaking() {
+        console.log('[TTS] stopSpeaking called');
+        
+        if (!this.synthesizer) {
+            console.log('[TTS] STOP: žádný aktivní synthesizer');
+            return;
+        }
+        
+        try {
+            // close() ukončí aktuálně probíhající přehrávání a uvolní zdroje
+            this.synthesizer.close();
+            console.log('[TTS] Synthesizer closed (STOP)');
+        } catch (e) {
+            console.warn('[TTS] Chyba při close() synthesizeru:', e);
+        }
+        
+        this.synthesizer = null;
+        this.isSynthesizing = false;
+        
+        // Vytvoříme nový synthesizer pro další použití
+        if (this.speechConfig) {
+            try {
+                this.createSynthesizer();
+            } catch (e) {
+                console.error('[TTS] Nelze znovu vytvořit synthesizer:', e);
+            }
+        }
+        
+        this.updateStatus('Zastaveno', 'success');
+        this.showToast('Přehrávání zastaveno', 'success');
     }
     
     ensureAudioUnlocked() {
