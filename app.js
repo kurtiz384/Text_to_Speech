@@ -346,34 +346,93 @@ class TextToSpeechApp {
     }
 
     setupKeyboardShortcuts() {
-        // Control+Command+V = Speak All
-        // Control+Command+B = Speak Selection
-        // Control+Command+S = STOP  (NOVÉ)
+        // Klávesové zkratky:
+        //   Control+Command+V  = Speak All
+        //   Control+Command+B  = Speak Selection
+        //   Control+Command+S  = STOP   (primární)
+        //   Control+Command+X  = STOP   (záloha - Cmd+S Safari na iPadu zachytává)
+        //   Escape             = STOP   (záloha - vždy funguje)
         //
-        // Poznámka: Safari na iPadu může některé Cmd+Ctrl zkratky zachytávat.
-        // Pokud Ctrl+Cmd+S nebude fungovat, lze přidat záložní kombinaci.
+        // Safari na iPadu blokuje Cmd+S na úrovni systému (Save Page).
+        // Proto:
+        //   1) Používáme CAPTURE fázi (true) - listener se spustí dřív než Safari.
+        //   2) Detekce přes e.code (fyzická klávesa) místo e.key.
+        //   3) Přidány záložní zkratky, které Safari nezachytává.
+        //   4) preventDefault() + stopPropagation() pro maximální spolehlivost.
         
-        document.addEventListener('keydown', (e) => {
-            // Check for Control+Command (or Ctrl+Meta on some systems)
+        const handler = (e) => {
+            // Diagnostický log - uvidíte v Safari Web Inspectoru,
+            // co přesně zařízení posílá při každém stisku s modifikátory.
+            if (e.ctrlKey || e.metaKey) {
+                console.log('[TTS][KEY]', {
+                    key: e.key,
+                    code: e.code,
+                    ctrl: e.ctrlKey,
+                    meta: e.metaKey,
+                    shift: e.shiftKey,
+                    alt: e.altKey
+                });
+            }
+            
             const isCtrlCmd = (e.ctrlKey && e.metaKey);
+            
+            // === STOP zkratky ===
+            // 1) Esc - vždy STOP, žádné modifikátory
+            if (e.code === 'Escape' || e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.stopSpeaking();
+                console.log('[TTS] Keyboard shortcut: STOP (Esc)');
+                return;
+            }
             
             if (!isCtrlCmd) return;
             
-            if (e.key === 'v' || e.key === 'V') {
+            // 2) Ctrl+Cmd+S (primární, ale Safari ho může blokovat)
+            if (e.code === 'KeyS') {
                 e.preventDefault();
-                this.speakAll(this.activeWindow);
-                console.log('[TTS] Keyboard shortcut: Speak All (Ctrl+Cmd+V)');
-            } else if (e.key === 'b' || e.key === 'B') {
-                e.preventDefault();
-                this.speakSelection(this.activeWindow);
-                console.log('[TTS] Keyboard shortcut: Speak Selection (Ctrl+Cmd+B)');
-            } else if (e.key === 's' || e.key === 'S') {
-                // NOVÉ: STOP
-                e.preventDefault();
+                e.stopPropagation();
                 this.stopSpeaking();
                 console.log('[TTS] Keyboard shortcut: STOP (Ctrl+Cmd+S)');
+                return;
             }
-        });
+            
+            // 3) Ctrl+Cmd+X (záložní pro STOP)
+            if (e.code === 'KeyX') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.stopSpeaking();
+                console.log('[TTS] Keyboard shortcut: STOP (Ctrl+Cmd+X)');
+                return;
+            }
+            
+            // === Speak zkratky ===
+            if (e.code === 'KeyV') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.speakAll(this.activeWindow);
+                console.log('[TTS] Keyboard shortcut: Speak All (Ctrl+Cmd+V)');
+                return;
+            }
+            
+            if (e.code === 'KeyB') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.speakSelection(this.activeWindow);
+                console.log('[TTS] Keyboard shortcut: Speak Selection (Ctrl+Cmd+B)');
+                return;
+            }
+        };
+        
+        // CAPTURE fáze (třetí parametr = true) - listener se spustí
+        // při sestupu eventu, tedy dřív než case-listener Safari na <body>.
+        // To je klíčový trik pro obejití systémových zkratek.
+        document.addEventListener('keydown', handler, true);
+        
+        // Pro jistotu i v bubble fázi - kdyby capture něco propustilo.
+        document.addEventListener('keydown', handler, false);
+        
+        console.log('[TTS] Keyboard shortcuts registered (capture + bubble)');
     }
 
     // ===============================================================
