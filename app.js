@@ -533,26 +533,108 @@ class TextToSpeechApp {
         await this.synthesizeSpeech(this.lastText);
     }
     
-    // NOVÉ: zastaví probíhající syntézu.
-    // Azure JS SDK nemá samostatnou "stop" metodu - musíme synthesizer
-    // zavřít (close) a vytvořit nový pro další požadavky.
+    // Zastaví probíhající přehrávání.
+    //
+    // PROBLÉM: Azure SDK stáhne celé audio a předá ho prohlížeči k přehrání.
+    // synthesizer.close() zastaví jen budoucí syntézu, ne přehrávání audia,
+    // které už hraje. Audio přehrává <audio> element nebo Web Audio API,
+    // a ten musíme zastavit sami.
+    //
+    // ŘEŠENÍ: Útočíme z více stran současně:
+    //   1) Zastavíme všechny <audio>/<video> elementy v dokumentu.
+    //   2) Pokud běží AudioContext (Web Audio API), pozastavíme ho.
+    //   3) Pokud SDK uchovává interní player, voláme jeho pause/close.
+    //   4) Zavřeme synthesizer a vytvoříme nový pro další použití.
     stopSpeaking() {
         console.log('[TTS] stopSpeaking called');
         
-        if (!this.synthesizer) {
-            console.log('[TTS] STOP: žádný aktivní synthesizer');
-            return;
-        }
+        let stoppedSomething = false;
         
+        // === 1) Zastavit všechny HTML audio/video elementy ===
+        // Azure SDK někdy vytváří <audio> element a přidává ho do DOM.
         try {
-            // close() ukončí aktuálně probíhající přehrávání a uvolní zdroje
-            this.synthesizer.close();
-            console.log('[TTS] Synthesizer closed (STOP)');
+            const mediaElements = document.querySelectorAll('audio, video');
+            mediaElements.forEach((el, idx) => {
+                if (!el.paused) {
+                    el.pause();
+                    stoppedSomething = true;
+                    console.log(`[TTS] Pozastaven media element #${idx}`);
+                }
+                // Reset pozice, ať se nepokouší pokračovat
+                try { el.currentTime = 0; } catch (_) {}
+                // Odpojit zdroj
+                try { el.src = ''; el.removeAttribute('src'); el.load(); } catch (_) {}
+            });
+            console.log(`[TTS] Zkontrolováno ${mediaElements.length} media elementů`);
         } catch (e) {
-            console.warn('[TTS] Chyba při close() synthesizeru:', e);
+            console.warn('[TTS] Chyba při zastavování media elementů:', e);
         }
         
-        this.synthesizer = null;
+        // === 2) Pozastavit globální AudioContexty ===
+        // Web Audio API - SDK nebo prohlížeč mohou používat AudioContext.
+        // V iOS Safari je obvykle jen jeden globální kontext.
+        try {
+            // Některé SDK nechávají kontext na window.audioContext nebo podobně
+            const possibleContexts = [
+                window.audioContext,
+                window.AudioContext && this._lastAudioContext,
+            ].filter(Boolean);
+            
+            possibleContexts.forEach((ctx, idx) => {
+                if (ctx && typeof ctx.suspend === 'function' && ctx.state === 'running') {
+                    ctx.suspend();
+                    stoppedSomething = true;
+                    console.log(`[TTS] Pozastaven AudioContext #${idx}`);
+                }
+            });
+        } catch (e) {
+            console.warn('[TTS] Chyba při suspend AudioContextu:', e);
+        }
+        
+        // === 3) Sáhnout do synthesizeru a najít interní player ===
+        // Azure SDK má interní strukturu - zkusíme najít a zastavit
+        // jejich audio destination. Toto je hack, ale pomáhá.
+        try {
+            if (this.synthesizer) {
+                // Audio config se na synthesizeru drží pod různými jmény
+                const candidates = [
+                    this.synthesizer.privAudioConfig,
+                    this.synthesizer.audioConfig,
+                    this.synthesizer.privAdapter,
+                ];
+                
+                candidates.forEach((obj) => {
+                    if (!obj) return;
+                    // Hledáme jakýkoli vnořený objekt s pause/close metodou
+                    Object.values(obj).forEach((val) => {
+                        if (val && typeof val === 'object') {
+                            if (typeof val.pause === 'function') {
+                                try { val.pause(); stoppedSomething = true; } catch (_) {}
+                            }
+                            if (typeof val.close === 'function' && val !== this.synthesizer) {
+                                try { val.close(); stoppedSomething = true; } catch (_) {}
+                            }
+                        }
+                    });
+                });
+            }
+        } catch (e) {
+            // SDK internals jsou nestabilní mezi verzemi - chyba je ok
+            console.log('[TTS] Internal SDK probe failed (ok):', e.message);
+        }
+        
+        // === 4) Zavřít a znovu vytvořit synthesizer ===
+        if (this.synthesizer) {
+            try {
+                this.synthesizer.close();
+                console.log('[TTS] Synthesizer closed');
+                stoppedSomething = true;
+            } catch (e) {
+                console.warn('[TTS] Chyba při close() synthesizeru:', e);
+            }
+            this.synthesizer = null;
+        }
+        
         this.isSynthesizing = false;
         
         // Vytvoříme nový synthesizer pro další použití
@@ -565,7 +647,12 @@ class TextToSpeechApp {
         }
         
         this.updateStatus('Zastaveno', 'success');
-        this.showToast('Přehrávání zastaveno', 'success');
+        this.showToast(
+            stoppedSomething ? 'Přehrávání zastaveno' : 'Nic nehraje',
+            'success'
+        );
+        
+        console.log('[TTS] stopSpeaking done, stoppedSomething=', stoppedSomething);
     }
     
     ensureAudioUnlocked() {
