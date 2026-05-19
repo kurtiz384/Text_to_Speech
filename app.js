@@ -6,7 +6,13 @@
 // - Přidána tlačítka STOP ke každému oknu
 // - Klávesová zkratka Ctrl+Cmd+S pro zastavení mluvení
 // - Font textových polí zvětšen o 15% (inline přes JS)
+// - Konfigurovatelná pauza před textem (přepínač Pauza)
 // ===================================================================
+
+// Verze kódu. Při každé úpravě zvyšte (např. datum + pořadí).
+// Zobrazuje se v titulku okna a v UI - tím vždy poznáte, jestli
+// Safari/PWA cache načetla aktuální verzi.
+const APP_VERSION = '2026-05-16.1';
 
 class TextToSpeechApp {
     constructor() {
@@ -37,11 +43,13 @@ class TextToSpeechApp {
         
         // Setup UI
         this.setupUI();
-        this.injectStopButtons();      // NOVÉ: přidá STOP tlačítka do DOM
-        this.enlargeTextareaFonts();   // NOVÉ: zvětší font textových polí o 15 %
+        this.injectVersionBadge();        // zobrazí verzi v titulku okna i v UI
+        this.injectStopButtons();         // přidá STOP tlačítka do DOM
+        this.injectBreakTimeSelector();   // přidá přepínač pro experiment s pauzou
+        this.enlargeTextareaFonts();      // zvětší font textových polí o 15 %
         this.setupEventListeners();
         this.setupKeyboardShortcuts();
-        this.setupStalenessDetection(); // NOVÉ: označit synthesizer jako stale po probuzení iPadu
+        this.setupStalenessDetection();   // označit synthesizer jako stale po probuzení iPadu
         this.restoreTexts();
         
         // Initialize Azure SDK
@@ -260,6 +268,95 @@ class TextToSpeechApp {
                 console.log(`[TTS] textArea${i} font: ${currentPx}px → ${newPx}px (+15%)`);
             }
         }
+    }
+
+    // Zobrazí verzi kódu v titulku okna a v UI.
+    // Slouží k ověření, že Safari/PWA cache načetla aktuální verzi -
+    // při každé úpravě stačí zvýšit konstantu APP_VERSION na začátku
+    // souboru a verze se promítne všude.
+    injectVersionBadge() {
+        // 1) Titulek okna (Safari tab title)
+        const originalTitle = document.title || 'TTS';
+        document.title = `${originalTitle} v${APP_VERSION}`;
+        
+        // 2) Vizuální badge v rohu obrazovky - fixed pozice,
+        //    aby fungovala bez ohledu na strukturu HTML
+        if (document.getElementById('appVersionBadge')) return;
+        
+        const badge = document.createElement('div');
+        badge.id = 'appVersionBadge';
+        badge.textContent = `v${APP_VERSION}`;
+        badge.style.cssText = `
+            position: fixed;
+            bottom: 4px;
+            right: 8px;
+            font-size: 10px;
+            color: rgba(128, 128, 128, 0.7);
+            font-family: -apple-system, monospace;
+            pointer-events: none;
+            z-index: 9999;
+            user-select: none;
+        `;
+        document.body.appendChild(badge);
+        
+        // 3) Console log - pro Web Inspector
+        console.log(`[TTS] App version: ${APP_VERSION}`);
+    }
+
+    // EXPERIMENT: dynamicky přidá přepínač "Pauza" vedle Rychlosti.
+    // Umožňuje za běhu měnit délku <break time='Xms'/> v SSML a porovnat
+    // latenci. Hodnota se ukládá do localStorage pod klíčem 'breakTimeMs'.
+    injectBreakTimeSelector() {
+        // Najdeme rateSelect a vložíme nový label+select hned za něj
+        const rateSelect = document.getElementById('rateSelect');
+        if (!rateSelect) {
+            console.warn('[TTS] rateSelect nenalezen, přepínač pauzy nepřidán');
+            return;
+        }
+        
+        // Pokud už existuje, nepřidáme znovu (např. po hot-reloadu)
+        if (document.getElementById('breakTimeSelect')) return;
+        
+        // Label
+        const label = document.createElement('label');
+        label.setAttribute('for', 'breakTimeSelect');
+        label.style.marginLeft = '12px';
+        label.textContent = 'Pauza:';
+        
+        // Select
+        const select = document.createElement('select');
+        select.id = 'breakTimeSelect';
+        // Použijeme stejné CSS třídy jako sousední select, pokud existují
+        select.className = rateSelect.className;
+        
+        const options = [
+            { value: '0',   label: '0 ms (nejrychlejší)' },
+            { value: '50',  label: '50 ms (kompromis)' },
+            { value: '100', label: '100 ms' },
+            { value: '200', label: '200 ms (originál)' }
+        ];
+        options.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            select.appendChild(option);
+        });
+        
+        // Načíst uloženou hodnotu nebo výchozích 50
+        const saved = localStorage.getItem('breakTimeMs') ?? '50';
+        select.value = saved;
+        
+        // Uložit při změně
+        select.addEventListener('change', (e) => {
+            localStorage.setItem('breakTimeMs', e.target.value);
+            console.log('[TTS] Break time changed to:', e.target.value, 'ms');
+        });
+        
+        // Vložíme za rateSelect (na stejnou úroveň v DOM)
+        rateSelect.insertAdjacentElement('afterend', select);
+        rateSelect.insertAdjacentElement('afterend', label);
+        
+        console.log('[TTS] Break time selector přidán, aktuální hodnota:', saved, 'ms');
     }
 
     setupEventListeners() {
@@ -799,16 +896,22 @@ class TextToSpeechApp {
         // Escape XML special characters
         const safeText = this.escapeXml(text);
         
-        // Build SSML with leading silence to prevent first syllable cutoff
-        // Using 200ms for reliable first syllable across all languages (de, cs, en)
+        // Konfigurovatelná úvodní pauza (experiment s latencí).
+        // Hodnoty: 0 = bez pauzy, 50 = krátká, 200 = standard (původní)
+        // Výchozí 50 ms - kompromis mezi rychlostí a bezpečností proti oříznutí první slabiky.
+        const breakMs = parseInt(localStorage.getItem('breakTimeMs') ?? '50', 10);
+        const breakTag = breakMs > 0 ? `<break time='${breakMs}ms'/>` : '';
+        
         const ssml = `
 <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'>
     <voice name='${voiceId}'>
-        <break time='200ms'/>
+        ${breakTag}
         <prosody rate='${rate}'>${safeText}</prosody>
     </voice>
 </speak>
         `.trim();
+        
+        console.log('[TTS] Break time:', breakMs, 'ms');
         
         console.log('[TTS] SSML prepared');
         console.log('[TTS] Voice:', voiceId);
