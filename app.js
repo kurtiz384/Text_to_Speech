@@ -21,7 +21,6 @@ class TextToSpeechApp {
         this._lastSuccessfulSynthAt = null; // čas posledního úspěšného přehrání
         this._synthesizerStale = false;     // true = synthesizer je podezřelý (po pozadí/sleep)
         this._lastHiddenAt = null;          // čas, kdy aplikace přešla na pozadí
-        this._audioWatchdogTimer = null;    // timer pro detekci tichého selhání
         
         this.init();
     }
@@ -584,110 +583,6 @@ class TextToSpeechApp {
         await this.synthesizeSpeech(this.lastText);
     }
     
-    // WATCHDOG: detekce tichého selhání.
-    // Azure SDK někdy hlásí úspěch, ale audio nikdy nezačne hrát
-    // (typicky po idle timeoutu WebSocket spojení).
-    //
-    // PŘEPRACOVÁNO: Místo časové kontroly stavu (která hlásila falešné poplachy
-    // pro krátké texty, co dohrály dřív než watchdog checkl) sledujeme
-    // přes event listenery, jestli některý audio element začne hrát.
-    //
-    // Logika:
-    //   1) Snímek audio elementů PŘED watchdogem (žádné z nich nás nezajímají).
-    //   2) Po krátkém čekání najdeme NOVÉ audio elementy přidané SDK.
-    //   3) Na ty navěsíme listener 'playing' - jakmile začne hrát, máme jistotu.
-    //   4) Pokud do 2.5s žádný neožil, je to skutečné tiché selhání.
-    startAudioWatchdog(synthLatency) {
-        // Zrušíme předchozí watchdog
-        if (this._audioWatchdogTimer) {
-            clearTimeout(this._audioWatchdogTimer);
-            this._audioWatchdogTimer = null;
-        }
-        if (this._audioWatchdogCleanup) {
-            this._audioWatchdogCleanup();
-            this._audioWatchdogCleanup = null;
-        }
-        
-        // Stav: zatím nic nehraje
-        let playbackStarted = false;
-        const trackedElements = [];
-        
-        // Najít audio elementy a navěsit na ně listenery.
-        // Děláme to s mírným zpožděním, aby SDK stihl audio element vytvořit
-        // (úspěch Azure se hlásí dřív, než se v DOM objeví <audio>).
-        const attachListeners = () => {
-            const audios = document.querySelectorAll('audio');
-            audios.forEach((el) => {
-                if (trackedElements.includes(el)) return;
-                
-                // 'playing' = element právě začal hrát (po pause / loading)
-                // 'play' = element dostal příkaz play (ale ještě nemusí znít)
-                const onPlay = () => {
-                    playbackStarted = true;
-                    console.log('[TTS][WATCHDOG] Audio začalo hrát ✓');
-                };
-                
-                el.addEventListener('playing', onPlay, { once: true });
-                el.addEventListener('play', onPlay, { once: true });
-                
-                trackedElements.push(el);
-                
-                // Pokud už element hraje (mohli jsme to chytit pozdě),
-                // detekujeme to bez čekání na event
-                if (!el.paused && el.currentTime > 0) {
-                    playbackStarted = true;
-                    console.log('[TTS][WATCHDOG] Audio už hrálo při navázání listeneru ✓');
-                }
-                
-                // Pokud už element skončil (dohrál dřív, než jsme se navázali),
-                // znamená to, že hrál - tedy úspěch
-                if (el.ended) {
-                    playbackStarted = true;
-                    console.log('[TTS][WATCHDOG] Audio už dohrálo při navázání listeneru ✓');
-                }
-            });
-        };
-        
-        // Cleanup - odstraní listenery, aby nepřežívaly mezi přehráními
-        this._audioWatchdogCleanup = () => {
-            trackedElements.forEach((el) => {
-                // listenery jsou { once: true }, takže se odeberou samy,
-                // ale pro jistotu vyčistíme i kdyby neproběhly
-            });
-        };
-        
-        // První pokus o navázání - ihned (možná už audio existuje)
-        attachListeners();
-        
-        // Druhý pokus - po 200 ms (SDK možná teprve vytváří element)
-        setTimeout(attachListeners, 200);
-        
-        // Třetí pokus - po 500 ms (úplně poslední šance navázat se)
-        setTimeout(attachListeners, 500);
-        
-        // Vyhodnocení po 2.5 sekundách
-        this._audioWatchdogTimer = setTimeout(() => {
-            console.log('[TTS][WATCHDOG] Vyhodnocení:',
-                'sledovaných elementů:', trackedElements.length,
-                'začalo hrát:', playbackStarted);
-            
-            if (!playbackStarted) {
-                console.warn('[TTS][WATCHDOG] Tiché selhání! Azure hlásil úspěch, ale zvuk nikdy nezačal hrát.');
-                this.updateStatus('Tiché selhání', 'error');
-                this.showToast(
-                    'Zvuk se nepřehrál (spojení mohlo vypršet). Klikněte znovu na Přečíst vše.',
-                    'warning'
-                );
-                
-                // Předem zavřeme synthesizer, ať další klik vytvoří úplně čerstvý
-                if (this.synthesizer) {
-                    try { this.synthesizer.close(); } catch (_) {}
-                    this.synthesizer = null;
-                }
-            }
-        }, 2500); // 2.5 sekundy - dost času, aby SDK stihl audio vytvořit i začít hrát
-    }
-    
     // Zastaví probíhající přehrávání.
     //
     // PROBLÉM: Azure SDK stáhne celé audio a předá ho prohlížeči k přehrání.
@@ -704,12 +599,6 @@ class TextToSpeechApp {
         console.log('[TTS] stopSpeaking called');
         
         let stoppedSomething = false;
-        
-        // Zrušit audio watchdog - aby nehlásil "tiché selhání", když jsme stopli sami
-        if (this._audioWatchdogTimer) {
-            clearTimeout(this._audioWatchdogTimer);
-            this._audioWatchdogTimer = null;
-        }
         
         // === 1) Zastavit všechny HTML audio/video elementy ===
         // Azure SDK někdy vytváří <audio> element a přidává ho do DOM.
@@ -950,12 +839,6 @@ class TextToSpeechApp {
                             // Zaznamenat čas posledního úspěchu - používá se
                             // pro idle detekci (po 5 minutách obnovíme synthesizer)
                             this._lastSuccessfulSynthAt = Date.now();
-                            
-                            // WATCHDOG: Azure SDK hlásí úspěch i v případě, že
-                            // audio data nikdy nedorazí do prohlížeče (např. WebSocket
-                            // mezitím spadl). Zkontrolujeme za 2 sekundy, jestli
-                            // skutečně něco hraje. Pokud ne, varujeme uživatele.
-                            this.startAudioWatchdog(latency);
                             
                             resolve();
                         } else if (result.reason === SpeechSDK.ResultReason.Canceled) {
