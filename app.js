@@ -17,6 +17,12 @@ class TextToSpeechApp {
         this.isSynthesizing = false;  // Flag to prevent concurrent synthesis
         this.speechConfig = null;     // Uloženo zvlášť, aby šlo synthesizer znovu vytvořit po STOP
         
+        // Idle/staleness tracking - pro chytrou obnovu synthesizeru
+        this._lastSuccessfulSynthAt = null; // čas posledního úspěšného přehrání
+        this._synthesizerStale = false;     // true = synthesizer je podezřelý (po pozadí/sleep)
+        this._lastHiddenAt = null;          // čas, kdy aplikace přešla na pozadí
+        this._audioWatchdogTimer = null;    // timer pro detekci tichého selhání
+        
         this.init();
     }
 
@@ -36,6 +42,7 @@ class TextToSpeechApp {
         this.enlargeTextareaFonts();   // NOVÉ: zvětší font textových polí o 15 %
         this.setupEventListeners();
         this.setupKeyboardShortcuts();
+        this.setupStalenessDetection(); // NOVÉ: označit synthesizer jako stale po probuzení iPadu
         this.restoreTexts();
         
         // Initialize Azure SDK
@@ -129,15 +136,19 @@ class TextToSpeechApp {
         }
     }
 
-    // NOVÉ: vytvoří (nebo znovuvytvoří) synthesizer.
-    // Voláno z initializeAzure() a po stopSpeaking().
+    // Vytvoří (nebo znovuvytvoří) synthesizer.
+    // Voláno z initializeAzure(), synthesizeSpeech() (chytrá obnova) a stopSpeaking().
     createSynthesizer() {
         const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
         this.synthesizer = new SpeechSDK.SpeechSynthesizer(
             this.speechConfig,
             audioConfig
         );
-        console.log('[TTS] Synthesizer created');
+        // Nový synthesizer = čerstvé spojení. Resetujeme idle čas a stale flag,
+        // aby ho synthesizeSpeech() okamžitě znovu neobnovoval.
+        this._lastSuccessfulSynthAt = Date.now();
+        this._synthesizerStale = false;
+        console.log('[TTS] Synthesizer created (předehřátý, idle čas resetován)');
     }
 
     populateVoices() {
@@ -433,6 +444,46 @@ class TextToSpeechApp {
         document.addEventListener('keydown', handler, false);
         
         console.log('[TTS] Keyboard shortcuts registered (capture + bubble)');
+    }
+    
+    // Označí synthesizer jako "stale" (= pravděpodobně rozbité spojení),
+    // když uživatel přepne pryč z aplikace nebo iPad uspí obrazovku.
+    // Při dalším pokusu o přehrání ho synthesizeSpeech automaticky obnoví.
+    //
+    // Důvod: po probuzení iPadu nebo návratu z jiné aplikace iOS Safari
+    // často přeruší WebSocket k Azure, ale SDK to nedetekuje a tváří se OK.
+    setupStalenessDetection() {
+        // visibilitychange = uživatel přepnul tab, minimalizoval Safari,
+        // uzamkl iPad, nebo se vrátil
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                console.log('[TTS] Aplikace přešla na pozadí');
+                this._lastHiddenAt = Date.now();
+            } else if (document.visibilityState === 'visible') {
+                const hiddenMs = this._lastHiddenAt
+                    ? (Date.now() - this._lastHiddenAt)
+                    : 0;
+                console.log(`[TTS] Aplikace se vrátila do popředí (bylo skryté ${Math.round(hiddenMs / 1000)}s)`);
+                
+                // Pokud byla aplikace na pozadí déle než 10 sekund,
+                // synthesizer je téměř jistě v podezřelém stavu
+                if (hiddenMs > 10 * 1000) {
+                    this._synthesizerStale = true;
+                    console.log('[TTS] Synthesizer označen jako stale - bude obnoven při dalším použití');
+                }
+            }
+        });
+        
+        // pageshow s persisted=true = stránka se vrátila z bfcache (back/forward cache)
+        // To znamená, že JS běh byl pozastaven a teď ožil - vše může být v podivném stavu
+        window.addEventListener('pageshow', (e) => {
+            if (e.persisted) {
+                console.log('[TTS] Stránka obnovena z bfcache - označuji synthesizer jako stale');
+                this._synthesizerStale = true;
+            }
+        });
+        
+        console.log('[TTS] Staleness detection setup complete');
     }
 
     // ===============================================================
@@ -731,30 +782,55 @@ class TextToSpeechApp {
             return;
         }
         
-        // KLÍČOVÁ ZMĚNA: vždy zavřeme starý synthesizer a vytvoříme nový.
-        // Důvod: dlouho žijící synthesizer drží WebSocket k Azure, který
-        // po nějaké době nečinnosti spadne nebo iOS Safari uspí. SDK to
-        // nezachytí - hlásí úspěch, ale audio se nikdy nestáhne (= "Přehrávám..." + ticho).
-        // Čerstvý synthesizer pro každé volání = vždy nové spojení.
-        if (this.synthesizer) {
-            try {
-                this.synthesizer.close();
-                console.log('[TTS] Starý synthesizer zavřen před novou syntézou');
-            } catch (e) {
-                console.warn('[TTS] Chyba při zavírání starého synthesizeru:', e);
+        // CHYTRÁ OBNOVA SYNTHESIZERU:
+        // Synthesizer obnovíme JEN když je potřeba - jinak používáme stávající
+        // (nízká latence). Důvody pro obnovu:
+        //   1) Synthesizer neexistuje (úplně první volání nebo po stop_speaking)
+        //   2) Idle - od posledního úspěšného přehrání uplynulo víc než 5 minut
+        //      (WebSocket k Azure mohl spadnout)
+        //   3) "stale" flag - aplikace zaregistrovala návrat z pozadí / probuzení
+        //      iPadu, takže staré spojení je podezřelé
+        const IDLE_LIMIT_MS = 5 * 60 * 1000; // 5 minut
+        const now = Date.now();
+        const idleMs = this._lastSuccessfulSynthAt
+            ? (now - this._lastSuccessfulSynthAt)
+            : Infinity;
+        
+        const needFresh = (
+            !this.synthesizer ||
+            this._synthesizerStale ||
+            idleMs > IDLE_LIMIT_MS
+        );
+        
+        if (needFresh) {
+            const reason = !this.synthesizer ? 'neexistuje'
+                : this._synthesizerStale ? 'stale (návrat z pozadí)'
+                : `idle ${Math.round(idleMs / 1000)}s > ${IDLE_LIMIT_MS / 1000}s`;
+            console.log(`[TTS] Obnovuji synthesizer - důvod: ${reason}`);
+            
+            // Zavřeme starý, pokud existuje
+            if (this.synthesizer) {
+                try {
+                    this.synthesizer.close();
+                } catch (e) {
+                    console.warn('[TTS] Chyba při zavírání starého synthesizeru:', e);
+                }
+                this.synthesizer = null;
             }
-            this.synthesizer = null;
+            
+            try {
+                this.createSynthesizer();
+                this._synthesizerStale = false;
+            } catch (e) {
+                console.error('[TTS] Nelze vytvořit nový synthesizer:', e);
+                this.showToast('Chyba při vytváření syntetizéru', 'error');
+                return;
+            }
+        } else {
+            console.log(`[TTS] Používám existující synthesizer (idle ${Math.round(idleMs / 1000)}s)`);
         }
         
-        try {
-            this.createSynthesizer();
-        } catch (e) {
-            console.error('[TTS] Nelze vytvořit nový synthesizer:', e);
-            this.showToast('Chyba při vytváření syntetizéru', 'error');
-            return;
-        }
-        
-        console.log('[TTS] Starting synthesis with fresh synthesizer...');
+        console.log('[TTS] Starting synthesis...');
         console.log('[TTS] First 100 chars:', text.substring(0, 100));
         
         this.lastText = text;
@@ -810,6 +886,10 @@ class TextToSpeechApp {
                             this.updateStatus('Přehrávám...', 'success');
                             this.showToast(`Přehrávání (${latency}ms)`, 'success');
                             this.isSynthesizing = false;  // Reset flag on success
+                            
+                            // Zaznamenat čas posledního úspěchu - používá se
+                            // pro idle detekci (po 5 minutách obnovíme synthesizer)
+                            this._lastSuccessfulSynthAt = Date.now();
                             
                             // WATCHDOG: Azure SDK hlásí úspěch i v případě, že
                             // audio data nikdy nedorazí do prohlížeče (např. WebSocket
