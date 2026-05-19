@@ -12,7 +12,7 @@
 // Verze kódu. Při každé úpravě zvyšte (např. datum + pořadí).
 // Zobrazuje se v titulku okna a v UI - tím vždy poznáte, jestli
 // Safari/PWA cache načetla aktuální verzi.
-const APP_VERSION = '2026-05-16.1';
+const APP_VERSION = '2026-05-16.2';
 
 class TextToSpeechApp {
     constructor() {
@@ -331,9 +331,9 @@ class TextToSpeechApp {
         
         const options = [
             { value: '0',   label: '0 ms (nejrychlejší)' },
-            { value: '50',  label: '50 ms (kompromis)' },
+            { value: '50',  label: '50 ms' },
             { value: '100', label: '100 ms' },
-            { value: '200', label: '200 ms (originál)' }
+            { value: '200', label: '200 ms (standard)' }
         ];
         options.forEach(opt => {
             const option = document.createElement('option');
@@ -342,8 +342,8 @@ class TextToSpeechApp {
             select.appendChild(option);
         });
         
-        // Načíst uloženou hodnotu nebo výchozích 50
-        const saved = localStorage.getItem('breakTimeMs') ?? '50';
+        // Načíst uloženou hodnotu nebo výchozích 200 ms
+        const saved = localStorage.getItem('breakTimeMs') ?? '200';
         select.value = saved;
         
         // Uložit při změně
@@ -896,10 +896,10 @@ class TextToSpeechApp {
         // Escape XML special characters
         const safeText = this.escapeXml(text);
         
-        // Konfigurovatelná úvodní pauza (experiment s latencí).
-        // Hodnoty: 0 = bez pauzy, 50 = krátká, 200 = standard (původní)
-        // Výchozí 50 ms - kompromis mezi rychlostí a bezpečností proti oříznutí první slabiky.
-        const breakMs = parseInt(localStorage.getItem('breakTimeMs') ?? '50', 10);
+        // Konfigurovatelná úvodní pauza (přepínač "Pauza" v UI).
+        // Hodnoty: 0 = bez pauzy, 50, 100, 200 ms.
+        // Výchozí 200 ms - osvědčená hodnota pro krátké věty na iPadu.
+        const breakMs = parseInt(localStorage.getItem('breakTimeMs') ?? '200', 10);
         const breakTag = breakMs > 0 ? `<break time='${breakMs}ms'/>` : '';
         
         const ssml = `
